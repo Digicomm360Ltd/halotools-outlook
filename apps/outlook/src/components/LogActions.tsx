@@ -317,7 +317,7 @@ function AppendDialog({
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<{ message: string; url?: string } | undefined>();
-  const [internalNote, setInternalNote] = useState(false);
+  const [internalNote, setInternalNote] = useState(true);
   const [includeAttachments, setIncludeAttachments] = useState(
     getDefaults().includeAttachmentsByDefault ?? true,
   );
