@@ -36,4 +36,4 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/digicomm360ltd/halotools-outlook:latest
