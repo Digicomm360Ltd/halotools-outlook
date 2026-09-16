@@ -36,7 +36,7 @@
     }
   },
   "validDomains": [
-    "tools.iusehalo.com",
+    "halotools.digicomm360.com",
     "login.microsoftonline.com",
     "login.windows.net",
     "login.live.com",
@@ -55,7 +55,7 @@
           "id": "TaskPaneRuntime",
           "type": "general",
           "code": {
-            "page": "https://tools.iusehalo.com/outlook/index.html"
+            "page": "https://halotools.digicomm360.com/outlook/index.html"
           },
           "lifetime": "short",
           "actions": [
@@ -71,7 +71,7 @@
           "id": "ComposeRuntime",
           "type": "general",
           "code": {
-            "page": "https://tools.iusehalo.com/outlook/compose/"
+            "page": "https://halotools.digicomm360.com/outlook/compose/"
           },
           "lifetime": "short",
           "actions": [
@@ -92,8 +92,8 @@
           },
           "type": "general",
           "code": {
-            "page": "https://tools.iusehalo.com/outlook/launchevent.html",
-            "script": "https://tools.iusehalo.com/outlook/launchevent.js"
+            "page": "https://halotools.digicomm360.com/outlook/launchevent.html",
+            "script": "https://halotools.digicomm360.com/outlook/launchevent.js"
           },
           "lifetime": "short",
           "actions": [
@@ -135,9 +135,9 @@
                   "id": "HaloGroup",
                   "label": "HaloPSA",
                   "icons": [
-                    { "size": 16, "url": "https://tools.iusehalo.com/outlook/assets/icon-16.png" },
-                    { "size": 32, "url": "https://tools.iusehalo.com/outlook/assets/icon-32.png" },
-                    { "size": 80, "url": "https://tools.iusehalo.com/outlook/assets/icon-80.png" }
+                    { "size": 16, "url": "https://halotools.digicomm360.com/outlook/assets/icon-16.png" },
+                    { "size": 32, "url": "https://halotools.digicomm360.com/outlook/assets/icon-32.png" },
+                    { "size": 80, "url": "https://halotools.digicomm360.com/outlook/assets/icon-80.png" }
                   ],
                   "controls": [
                     {
@@ -145,9 +145,9 @@
                       "type": "button",
                       "label": "Halo",
                       "icons": [
-                        { "size": 16, "url": "https://tools.iusehalo.com/outlook/assets/icon-16.png" },
-                        { "size": 32, "url": "https://tools.iusehalo.com/outlook/assets/icon-32.png" },
-                        { "size": 80, "url": "https://tools.iusehalo.com/outlook/assets/icon-80.png" }
+                        { "size": 16, "url": "https://halotools.digicomm360.com/outlook/assets/icon-16.png" },
+                        { "size": 32, "url": "https://halotools.digicomm360.com/outlook/assets/icon-32.png" },
+                        { "size": 80, "url": "https://halotools.digicomm360.com/outlook/assets/icon-80.png" }
                       ],
                       "supertip": {
                         "title": "Open Halo",
@@ -171,9 +171,9 @@
                   "id": "HaloComposeGroup",
                   "label": "HaloPSA",
                   "icons": [
-                    { "size": 16, "url": "https://tools.iusehalo.com/outlook/assets/icon-16.png" },
-                    { "size": 32, "url": "https://tools.iusehalo.com/outlook/assets/icon-32.png" },
-                    { "size": 80, "url": "https://tools.iusehalo.com/outlook/assets/icon-80.png" }
+                    { "size": 16, "url": "https://halotools.digicomm360.com/outlook/assets/icon-16.png" },
+                    { "size": 32, "url": "https://halotools.digicomm360.com/outlook/assets/icon-32.png" },
+                    { "size": 80, "url": "https://halotools.digicomm360.com/outlook/assets/icon-80.png" }
                   ],
                   "controls": [
                     {
@@ -181,9 +181,9 @@
                       "type": "button",
                       "label": "Halo",
                       "icons": [
-                        { "size": 16, "url": "https://tools.iusehalo.com/outlook/assets/icon-16.png" },
-                        { "size": 32, "url": "https://tools.iusehalo.com/outlook/assets/icon-32.png" },
-                        { "size": 80, "url": "https://tools.iusehalo.com/outlook/assets/icon-80.png" }
+                        { "size": 16, "url": "https://halotools.digicomm360.com/outlook/assets/icon-16.png" },
+                        { "size": 32, "url": "https://halotools.digicomm360.com/outlook/assets/icon-32.png" },
+                        { "size": 80, "url": "https://halotools.digicomm360.com/outlook/assets/icon-80.png" }
                       ],
                       "supertip": {
                         "title": "Open Halo",
