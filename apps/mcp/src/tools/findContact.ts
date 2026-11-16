@@ -4,7 +4,6 @@ import { findUserByEmail, getOpenTicketCount } from "@iusehalo/halo-api";
 
 const inputSchema = {
   email: z
-    .string()
     .email()
     .describe("Email address to look up in HaloPSA's contact (user) directory."),
 };

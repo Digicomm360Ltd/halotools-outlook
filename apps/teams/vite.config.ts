@@ -16,14 +16,14 @@ export default defineConfig({
       input: {
         // Personal/channel tab bundle — what an agent sees when they pin the
         // Halo app inside Teams.
-        tab: resolve(__dirname, "index.html"),
+        tab: resolve(import.meta.dirname, "index.html"),
         // Message-extension picker bundle — opens in a Teams task module when
         // the agent invokes "Insert ticket link" or "Insert canned text" from
         // the compose box.
-        messageExtension: resolve(__dirname, "messageExtension.html"),
+        messageExtension: resolve(import.meta.dirname, "messageExtension.html"),
         // OAuth callback page — separate entry, runs inside the popup opened by
         // microsoftTeams.authentication.authenticate(). Emits dist/auth/callback.html.
-        callback: resolve(__dirname, "auth/callback.html"),
+        callback: resolve(import.meta.dirname, "auth/callback.html"),
       },
     },
   },

@@ -10,7 +10,7 @@ const inputSchema = {
       "Halo REST path starting with '/', e.g. '/Agent', '/Tickets/123', '/Site'. The host + '/api' prefix are added automatically.",
     ),
   query: z
-    .record(z.union([z.string(), z.number(), z.boolean()]))
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
     .optional()
     .describe(
       "Object of query-string parameters (e.g. {count: 5, includedetails: true}). Values are coerced to strings.",

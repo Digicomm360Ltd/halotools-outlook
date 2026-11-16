@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { MANIFEST_VERSION } from "./src/setup/version";
+import { MANIFEST_VERSION } from "./src/setup/version.ts";
 
 // Deployed at https://tools.iusehalo.com/outlook/ — base path matches.
 // Override with VITE_BASE=/ for local dev or alternative paths.
@@ -12,20 +12,6 @@ const BASE = process.env.VITE_BASE ?? "/outlook/";
 // Emit /outlook/latest.json so the running SPA can detect when a newer
 // manifest is available. Compared first-three-segments-only against the `mv`
 // query param baked into the installed manifest's runtime URLs.
-// Remove dev-only manifest files that may exist locally but must never ship.
-function excludeDevManifests(): Plugin {
-  return {
-    name: "exclude-dev-manifests",
-    apply: "build",
-    closeBundle() {
-      for (const f of ["manifest.dev.json", "manifest.dev.zip"]) {
-        const target = resolve(__dirname, "dist", f);
-        if (existsSync(target)) rmSync(target);
-      }
-    },
-  };
-}
-
 function emitLatestJson(): Plugin {
   return {
     name: "emit-latest-json",
@@ -53,7 +39,7 @@ function stripDevManifest(): Plugin {
     apply: "build",
     closeBundle() {
       for (const f of ["manifest.dev.json", "manifest.dev.zip"]) {
-        const p = resolve(__dirname, "dist", f);
+        const p = resolve(import.meta.dirname, "dist", f);
         if (existsSync(p)) rmSync(p);
       }
     },
@@ -69,24 +55,26 @@ export default defineConfig({
     rollupOptions: {
       input: {
         // Main task pane bundle
-        taskpane: resolve(__dirname, "index.html"),
+        taskpane: resolve(import.meta.dirname, "index.html"),
         // OAuth callback page — separate entry so it can run standalone in the Office Dialog.
         // Lives at <root>/auth/callback.html so Vite emits dist/auth/callback.html.
-        callback: resolve(__dirname, "auth/callback.html"),
+        callback: resolve(import.meta.dirname, "auth/callback.html"),
         // Compose-surface task pane — mounted in the mailCompose runtime declared in manifest.json.
         // Emits dist/compose/index.html, served at /outlook/compose/.
-        compose: resolve(__dirname, "compose/index.html"),
+        compose: resolve(import.meta.dirname, "compose/index.html"),
         // Admin setup wizard — generates per-tenant manifest .zip for M365 upload.
         // Standalone page (no Office.js); served at /outlook/setup/.
-        setup: resolve(__dirname, "setup/index.html"),
+        setup: resolve(import.meta.dirname, "setup/index.html"),
       },
     },
   },
   server: {
     port: 3000,
     host: true,
-    // Outlook sideload requires HTTPS — use office-addin-dev-certs locally,
-    // or tunnel via ngrok / Cloudflare. Production hosts handle TLS.
+    // Outlook sideload requires HTTPS. Generate a trusted localhost cert once
+    // with `npx office-addin-dev-certs install` (not a dependency: its mkcert →
+    // node-forge chain carries an unpatched advisory, so it stays out of the
+    // lockfile), or tunnel via ngrok / Cloudflare. Production hosts handle TLS.
     https: (() => {
       const certsDir = `${homedir()}/.office-addin-dev-certs`;
       const key = `${certsDir}/localhost.key`;

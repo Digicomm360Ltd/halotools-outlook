@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  schedule:
+    # Weekly audit so newly published advisories against the pinned lockfile
+    # surface even when nothing is being merged.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Typecheck, build, audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run build
+
+      - run: npm run build:browser-ext
+
+      # Vulnerability gate: any advisory at moderate or above in the lockfile
+      # fails the build. Accepted risks must be documented in SECURITY.md and
+      # excluded explicitly here — none are currently accepted.
+      - name: npm audit (moderate+ fails)
+        run: npm audit --audit-level=moderate

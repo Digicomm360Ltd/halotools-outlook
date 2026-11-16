@@ -14,6 +14,7 @@ import type {
   HaloAgent,
   HaloClientCache,
   HaloChargeRate,
+  HaloLookup,
   HaloSalesMailboxGroup,
   HaloKbArticle,
   HaloCannedText,
@@ -272,29 +273,124 @@ async function call<T>(
 
 // ---------- Read paths ----------
 
+// /Users search parameters. `onlyusers=false&onlyprospects=false` returns
+// contacts AND prospects in one call (confirmed against a live tenant:
+// a plain `search=` returned the contact only); no `includeinactive` filter —
+// an exact email match is a match whether or not the contact is archived.
+const USER_SEARCH_PARAMS = { pageinate: "false", onlyusers: "false", onlyprospects: "false" } as const;
+
 export async function findUserByEmail(email: string): Promise<HaloUser | undefined> {
-  const q = new URLSearchParams({ search: email, includeinactive: "false" });
+  const q = new URLSearchParams({ search: email, ...USER_SEARCH_PARAMS });
   const res = await call<{ users: HaloUser[] } | HaloUser[]>(`/Users?${q}`);
   const arr = Array.isArray(res) ? res : res.users;
-  return arr.find((u) => u.emailaddress?.toLowerCase() === email.toLowerCase()) ?? arr[0];
+  // Exact address only. Halo's `search` is a contains-match, so the first
+  // result for a@b.com can be a different person entirely.
+  return arr.find((u) => u.emailaddress?.toLowerCase() === email.toLowerCase().trim());
 }
 
 /** Broad user search for the manual picker — returns all matches. */
 export async function searchUsers(query: string, limit = 25): Promise<HaloUser[]> {
   const q = new URLSearchParams({
     search: query,
-    includeinactive: "false",
+    onlyusers: "false",
+    onlyprospects: "false",
     count: String(limit),
   });
   const res = await call<{ users: HaloUser[] } | HaloUser[]>(`/Users?${q}`);
   return Array.isArray(res) ? res : res.users;
 }
 
+// ---------- Domain → client (fail closed) ----------
+//
+// An email domain is attributed to a client only when the evidence is
+// unambiguous. Halo's `/Client?search=` is a contains-match that happily
+// returns a dozen clients for "gmail.com", and taking the first result (or a
+// substring test — "mail.com" is inside "gmail.com") logged mail to the wrong
+// client's ticket. Two exact signals, in order:
+//   1. every Halo contact whose address domain IS `domain` belongs to one
+//      client_id (contact addresses are always returned by /Users);
+//   2. exactly one client record has `domain` configured as an email domain.
+// Anything else → undefined. Mirrored in apps/outlook/public/launchevent.js
+// (vanilla JS, can't import) — keep the two in sync.
+
+/** Consumer / free-mail domains are never evidence of a client: a tenant
+ *  where only one client happens to have a gmail contact would otherwise
+ *  attribute every gmail.com sender to that client. Applies to the domain
+ *  step only — an exact contact match at such an address is still a match. */
+export const FREE_MAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "gmail.com", "googlemail.com", "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com",
+  "live.co.uk", "msn.com", "yahoo.com", "yahoo.co.uk", "ymail.com", "icloud.com", "me.com",
+  "mac.com", "aol.com", "proton.me", "protonmail.com", "pm.me", "gmx.com", "gmx.net",
+  "mail.com", "zoho.com", "fastmail.com", "comcast.net", "att.net", "verizon.net",
+]);
+
+export function isFreeMailDomain(domain: string): boolean {
+  return FREE_MAIL_DOMAINS.has(domain.toLowerCase().trim());
+}
+
+/** Halo exposes a client's email domain under different names across
+ *  versions; the value may list several domains separated by , ; or
+ *  whitespace. */
+const CLIENT_DOMAIN_FIELDS = ["emaildomain", "client_email_address_domain", "emaildomains", "todomain"] as const;
+
+export function clientEmailDomains(client: HaloClient | undefined): string[] {
+  if (!client) return [];
+  const out = new Set<string>();
+  for (const f of CLIENT_DOMAIN_FIELDS) {
+    const raw = (client as unknown as Record<string, unknown>)[f];
+    if (typeof raw !== "string" || !raw) continue;
+    for (const part of raw.toLowerCase().split(/[\s,;]+/)) {
+      const d = part.replace(/^@/, "").trim();
+      if (d) out.add(d);
+    }
+  }
+  return [...out];
+}
+
+/** The ONE active client whose configured domains contain `domain` exactly. */
+export function pickClientByDomain(clients: HaloClient[], domain: string): HaloClient | undefined {
+  const d = domain.toLowerCase().trim();
+  if (!d) return undefined;
+  const hits = clients.filter((c) => c && !c.inactive && clientEmailDomains(c).includes(d));
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
+/** The ONE client_id shared by every active contact whose address domain is
+ *  exactly `domain`; undefined when none or several. */
+export function clientIdFromUsers(users: HaloUser[], domain: string): number | undefined {
+  const d = domain.toLowerCase().trim();
+  if (!d) return undefined;
+  const ids = new Set<number>();
+  for (const u of users) {
+    if (!u || !u.emailaddress) continue;
+    const at = u.emailaddress.lastIndexOf("@");
+    if (at < 0 || u.emailaddress.slice(at + 1).toLowerCase().trim() !== d) continue;
+    if (u.client_id) ids.add(u.client_id);
+  }
+  return ids.size === 1 ? [...ids][0] : undefined;
+}
+
 export async function findClientByDomain(domain: string): Promise<HaloClient | undefined> {
-  const q = new URLSearchParams({ search: domain, includeinactive: "false" });
+  const d = domain.toLowerCase().trim();
+  if (!d || isFreeMailDomain(d)) return undefined;
+  // 1. Other contacts on this domain, all under one client.
+  const uq = new URLSearchParams({ search: `@${d}`, ...USER_SEARCH_PARAMS });
+  const ures = await call<{ users: HaloUser[] } | HaloUser[]>(`/Users?${uq}`);
+  const users = Array.isArray(ures) ? ures : ures.users ?? [];
+  const cid = clientIdFromUsers(users, d);
+  if (cid) {
+    try {
+      return await getClientDetails(cid);
+    } catch {
+      const named = users.find((u) => u.client_id === cid);
+      return { id: cid, name: named?.client_name ?? `Client ${cid}` };
+    }
+  }
+  // 2. A client record with this exact domain configured.
+  const q = new URLSearchParams({ search: d, includeinactive: "false", pageinate: "false" });
   const res = await call<{ clients: HaloClient[] } | HaloClient[]>(`/Client?${q}`);
-  const arr = Array.isArray(res) ? res : res.clients;
-  return arr[0];
+  const arr = Array.isArray(res) ? res : res.clients ?? [];
+  return pickClientByDomain(arr, d);
 }
 
 /** Broad client search for the manual picker. */
@@ -773,6 +869,7 @@ export async function getClientCache(force = false): Promise<HaloClientCache> {
     _clientCachePromise = undefined;
     writeAgentSnapshot(res.agent);
     writeMailboxSnapshot(res);
+    writeLiteCache(res);
     // Resolve the agent's sales mailbox in the background so it's cached by
     // the time the on-send handler needs it. Non-blocking; failure is
     // expected for tenants without sales mailbox functionality.
@@ -822,16 +919,34 @@ export function intakeMailboxAddresses(cache: HaloClientCache): string[] {
   return [...out];
 }
 
-function writeMailboxSnapshot(cache: HaloClientCache): void {
+// ---------- Cross-runtime snapshots ----------
+//
+// The on-send handler (public/launchevent.js) runs in its own runtime. In
+// classic Outlook on Windows that is a JavaScript-only runtime with NO
+// localStorage, so everything it needs from the task pane (agent identity +
+// signature, subject tags, intake mailboxes) is written through the installed
+// storage adapter — Office.context.roamingSettings in Outlook, which a fresh
+// on-send runtime loads at start — and mirrored to localStorage for browser
+// runtimes / local dev. roamingSettings is capped at ~32 KB in total, so each
+// snapshot is trimmed to what the handler reads.
+const MAX_SNAPSHOT_SIGNATURE_CHARS = 6000;
+
+function writeSnapshot(key: string, value: unknown): void {
+  try {
+    void storage().set(key, value).catch(() => { /* quota / not installed */ });
+  } catch {
+    /* storage adapter not installed (unit tests) */
+  }
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      MAILBOX_SNAPSHOT_KEY,
-      JSON.stringify(intakeMailboxAddresses(cache)),
-    );
+    window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     /* swallow — quota, private mode, etc. */
   }
+}
+
+function writeMailboxSnapshot(cache: HaloClientCache): void {
+  writeSnapshot(MAILBOX_SNAPSHOT_KEY, intakeMailboxAddresses(cache));
 }
 
 /** Decode a base64 string (bare or "data:<mime>;base64,<...>") into a Blob. */
@@ -890,18 +1005,10 @@ export function imageBase64ToBlob(base64: string, contentType: string): Blob {
 }
 
 function writeControlSnapshot(control: HaloControl): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      CONTROL_SNAPSHOT_KEY,
-      JSON.stringify({
-        email_start_tag: control.email_start_tag ?? "",
-        email_end_tag: control.email_end_tag ?? "",
-      }),
-    );
-  } catch {
-    /* swallow — quota, private mode, etc. */
-  }
+  writeSnapshot(CONTROL_SNAPSHOT_KEY, {
+    email_start_tag: control.email_start_tag ?? "",
+    email_end_tag: control.email_end_tag ?? "",
+  });
 }
 
 interface AgentSnapshot {
@@ -916,19 +1023,19 @@ interface AgentSnapshot {
 }
 
 function writeAgentSnapshot(agent: HaloAgent | undefined): void {
-  if (!agent || typeof window === "undefined") return;
-  try {
-    const snap: AgentSnapshot = {
-      id: agent.id,
-      name: agent.name,
-      email: agent.email,
-      signature: agent.signature,
-      salesMailboxId: getCachedSalesMailboxId(),
-    };
-    window.localStorage.setItem(AGENT_SNAPSHOT_KEY, JSON.stringify(snap));
-  } catch {
-    /* swallow — quota, private mode, etc. */
-  }
+  if (!agent) return;
+  const sig = agent.signature ?? "";
+  const snap: AgentSnapshot = {
+    id: agent.id,
+    name: agent.name,
+    email: agent.email,
+    // An oversized signature would crowd tokens out of roamingSettings; the
+    // handler then simply doesn't strip it (never a wrong result, just a
+    // longer note).
+    signature: sig.length <= MAX_SNAPSHOT_SIGNATURE_CHARS ? sig : undefined,
+    salesMailboxId: getCachedSalesMailboxId(),
+  };
+  writeSnapshot(AGENT_SNAPSHOT_KEY, snap);
 }
 
 /** Synchronous accessor — returns the cached ClientCache if already loaded,
@@ -936,6 +1043,113 @@ function writeAgentSnapshot(agent: HaloAgent | undefined): void {
  *  isn't appropriate. Call getClientCache() once at app bootstrap to warm. */
 export function getCachedClientCache(): HaloClientCache | undefined {
   return _clientCache;
+}
+
+// ---------- Compact ClientCache for short-lived runtimes ----------
+//
+// /ClientCache is ~3 MB. The compose pane is a short-lived runtime (a fresh
+// process per compose window), so warming the full cache on every open meant
+// one 3 MB download per email. The compose surface needs three small things
+// from it — the agent, the charge-rate lookup, the intake mailboxes — so the
+// task pane (which loads the full cache anyway) persists just those to
+// localStorage, and compose runs off that slice while it is fresh.
+
+export interface ClientCacheLite {
+  haloBaseUrl: string;
+  savedAt: number;
+  agent: Pick<HaloAgent, "id" | "name" | "email" | "colour" | "jobtitle">;
+  chargeRates: HaloChargeRate[];
+  intakeMailboxes: string[];
+}
+
+const LITE_CACHE_KEY = "halo.clientCacheLite.v1";
+const LITE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let _lite: ClientCacheLite | undefined;
+
+function chargeRatesFrom(lookups: HaloLookup[] | undefined): HaloChargeRate[] {
+  const rows = (lookups ?? []).filter((l) => l.lookupid === CHARGE_RATE_LOOKUP_ID);
+  const mapped: HaloChargeRate[] = rows.map((l) => ({
+    id: l.id,
+    name: l.name,
+    colour: typeof l.custom2 === "string" ? l.custom2 : undefined,
+  }));
+  // Guarantee a No Charge option (id 0) at the top, even if Halo's tenant
+  // config doesn't include one. The on-send payload omits chargerate when 0
+  // is selected, so this is purely a display affordance.
+  if (!mapped.some((r) => r.id === 0)) mapped.unshift({ id: 0, name: "No Charge" });
+  return mapped;
+}
+
+function writeLiteCache(cache: HaloClientCache): void {
+  const base = getConfig()?.haloBaseUrl;
+  if (!base || !cache.agent) return;
+  const lite: ClientCacheLite = {
+    haloBaseUrl: base,
+    savedAt: Date.now(),
+    agent: { id: cache.agent.id, name: cache.agent.name, email: cache.agent.email, colour: cache.agent.colour, jobtitle: cache.agent.jobtitle },
+    chargeRates: chargeRatesFrom(cache.lookups),
+    intakeMailboxes: intakeMailboxAddresses(cache),
+  };
+  _lite = lite;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LITE_CACHE_KEY, JSON.stringify(lite));
+  } catch {
+    /* swallow */
+  }
+}
+
+function readLiteCache(): ClientCacheLite | undefined {
+  if (_lite) return _lite;
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(LITE_CACHE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as ClientCacheLite;
+    const base = getConfig()?.haloBaseUrl;
+    if (!parsed || parsed.haloBaseUrl !== base) return undefined;
+    if (Date.now() - Number(parsed.savedAt || 0) > LITE_CACHE_TTL_MS) return undefined;
+    _lite = parsed;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Bootstrap for the compose surface: use the compact slice when it is fresh
+ * (no network), otherwise load the full ClientCache once (which also writes
+ * the slice for the next compose window). Never throws.
+ */
+export async function warmClientCacheForCompose({ useSlice = true }: { useSlice?: boolean } = {}): Promise<void> {
+  if (_clientCache || (useSlice && readLiteCache())) return;
+  try {
+    await getClientCache();
+  } catch {
+    /* non-fatal — charge rates degrade to No Charge, intake check to empty */
+  }
+}
+
+/** Drop the compact slice and the in-memory ClientCache so the next read
+ *  (or an immediate getClientCache()) fetches fresh from Halo. */
+export function clearComposeCache(): void {
+  _lite = undefined;
+  clearClientCache();
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LITE_CACHE_KEY);
+  } catch {
+    /* swallow */
+  }
+}
+
+/** Inbound Halo intake mailbox addresses — full cache if loaded, else the
+ *  compact slice, else a full load. */
+export async function getIntakeMailboxAddresses(): Promise<string[]> {
+  if (_clientCache) return intakeMailboxAddresses(_clientCache);
+  const lite = readLiteCache();
+  if (lite) return lite.intakeMailboxes;
+  return intakeMailboxAddresses(await getClientCache());
 }
 
 export function clearClientCache(): void {
@@ -1076,21 +1290,10 @@ const CHARGE_RATE_LOOKUP_ID = 17;
  *  no-charge and we want a stable picker option. */
 export function getChargeRates(): HaloChargeRate[] {
   const cc = getCachedClientCache();
-  const rows = (cc?.lookups ?? []).filter(
-    (l) => l.lookupid === CHARGE_RATE_LOOKUP_ID,
-  );
-  const mapped: HaloChargeRate[] = rows.map((l) => ({
-    id: l.id,
-    name: l.name,
-    colour: typeof l.custom2 === "string" ? l.custom2 : undefined,
-  }));
-  // Guarantee a No Charge option (id 0) at the top, even if Halo's tenant
-  // config doesn't include one. The on-send payload omits chargerate_id
-  // when 0 is selected, so this is purely a display affordance.
-  if (!mapped.some((r) => r.id === 0)) {
-    mapped.unshift({ id: 0, name: "No Charge" });
-  }
-  return mapped;
+  if (cc) return chargeRatesFrom(cc.lookups);
+  const lite = readLiteCache();
+  if (lite) return lite.chargeRates;
+  return chargeRatesFrom(undefined);
 }
 
 /**
@@ -1309,13 +1512,18 @@ export async function createCRMNote(payload: CreateCRMNotePayload): Promise<Halo
  * The query keys are `related_*_id` rather than the bare `*_id` used elsewhere.
  */
 export async function listFeed(scope: CRMScope, count = 20): Promise<HaloFeedItem[]> {
-  const q = new URLSearchParams({ count: String(count) });
+  // `count` alone is not honoured by /Feed (observed: 1,492 records for
+  // count=20). Ask for one page of `count` rows the way Halo's list endpoints
+  // page, and cap client-side regardless so the UI never renders more.
+  const q = new URLSearchParams({
+    count: String(count), pageinate: "true", page_size: String(count), page_no: "1",
+  });
   if (scope.client_id) q.set("related_client_id", String(scope.client_id));
   if (scope.site_id) q.set("related_site_id", String(scope.site_id));
   if (scope.user_id) q.set("related_user_id", String(scope.user_id));
   const res = await call<HaloFeedResponse | HaloFeedItem[]>(`/Feed?${q}`);
-  if (Array.isArray(res)) return res;
-  return res.feed ?? [];
+  const items = Array.isArray(res) ? res : res.feed ?? [];
+  return items.slice(0, count);
 }
 
 // ---------- Generic API escape hatch ----------

@@ -14,7 +14,7 @@ const inputSchema = {
     .optional()
     .describe("HTTP method. Defaults to GET."),
   query: z
-    .record(z.union([z.string(), z.number(), z.boolean()]))
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
     .optional()
     .describe(
       "Object of query-string parameters. Values are coerced to strings.",
